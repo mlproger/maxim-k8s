@@ -1,0 +1,38 @@
+# ===== Этап сборки зависимостей =====
+FROM python:3.11-slim AS builder
+
+WORKDIR /app
+
+# requirements.txt копируется отдельно от кода - слой пересобирается
+# только при изменении зависимостей, а не при каждом изменении main.py
+COPY requirements.txt .
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+# ===== Финальный образ =====
+FROM python:3.11-slim
+
+LABEL maintainer="fedchenko@lab.local"
+LABEL version="2.0"
+
+WORKDIR /app
+
+# Переносим уже установленные зависимости из builder-слоя,
+# pip-кэш и сборочные инструменты в финальный образ не попадают
+COPY --from=builder /root/.local /root/.local
+ENV PATH=/root/.local/bin:$PATH
+
+COPY app/ ./app/
+
+ENV PORT=5487
+
+EXPOSE ${PORT}
+
+# curl нужен только для HEALTHCHECK - в python:3.11-slim его нет по умолчанию
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:${PORT}/health || exit 1
+
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT}
