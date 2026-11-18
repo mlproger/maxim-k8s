@@ -1,9 +1,34 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
+from contextlib import asynccontextmanager
 import os
-import httpx
 
-app = FastAPI(title="Personal Assistant")
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+import httpx
+import psycopg
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+
+def connect_db():
+    return psycopg.connect(DATABASE_URL, connect_timeout=3)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if DATABASE_URL:
+        with connect_db() as connection:
+            # Serialize schema initialization if several workers start together.
+            connection.execute("SELECT pg_advisory_xact_lock(467857)")
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS notes (
+                    id bigint GENERATED ALWAYS AS IDENTITY (MINVALUE 0 START WITH 0) PRIMARY KEY,
+                    body text NOT NULL
+                )
+            """)
+    yield
+
+
+app = FastAPI(title="Personal Assistant", lifespan=lifespan)
 
 OWNER = os.getenv("APP_OWNER", "anonymous")
 SECRET_KEY = os.getenv("APP_SECRET", "default_secret")
@@ -27,7 +52,14 @@ async def root():
 
 
 @app.get("/health")
-async def health():
+def health():
+    if DATABASE_URL:
+        try:
+            with connect_db() as connection:
+                connection.execute("SELECT 1 FROM notes LIMIT 1")
+        except psycopg.Error as error:
+            raise HTTPException(status_code=503, detail="Database unavailable") from error
+        return {"status": "healthy", "owner": OWNER, "database": "connected"}
     return {"status": "healthy", "owner": OWNER}
 
 
@@ -111,12 +143,31 @@ async def weather(city: str):
 
 
 @app.post("/notes")
-async def create_note(note: Note):
-    notes.append(note.text)
-    return {"status": "saved", "note_id": len(notes) - 1, "total": len(notes)}
+def create_note(note: Note):
+    if not DATABASE_URL:
+        notes.append(note.text)
+        return {"status": "saved", "note_id": len(notes) - 1, "total": len(notes)}
+    try:
+        with connect_db() as connection:
+            note_id, = connection.execute(
+                "INSERT INTO notes (body) VALUES (%s) RETURNING id", (note.text,)
+            ).fetchone()
+            total, = connection.execute("SELECT count(*) FROM notes").fetchone()
+    except psycopg.Error as error:
+        raise HTTPException(status_code=503, detail="Database unavailable") from error
+    return {"status": "saved", "note_id": note_id, "total": total}
 
 
 @app.get("/notes")
-async def list_notes():
-    return {"notes": notes, "count": len(notes)}
+def list_notes():
+    if not DATABASE_URL:
+        return {"notes": notes, "count": len(notes)}
+    try:
+        with connect_db() as connection:
+            stored_notes = [
+                body for (body,) in connection.execute("SELECT body FROM notes ORDER BY id")
+            ]
+    except psycopg.Error as error:
+        raise HTTPException(status_code=503, detail="Database unavailable") from error
+    return {"notes": stored_notes, "count": len(stored_notes)}
 

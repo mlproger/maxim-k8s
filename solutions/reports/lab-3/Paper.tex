@@ -1,0 +1,103 @@
+\chapter{Цель работы}
+
+Подключить PostgreSQL к персональному ассистенту, проверить сохранность
+заметок при пересоздании контейнеров, подключить файл конфигурации с хоста
+и проверить изоляцию сети Docker.
+
+\section{Персональные параметры}
+
+\begin{table}[htbp]
+\centering
+\caption{Параметры запуска}
+\begin{tabularx}{\textwidth}{@{}Xl@{}}
+\hline
+Параметр & Значение \\
+\hline
+Номер ИСУ & 467857 \\
+Порт PostgreSQL на хосте & $5430+57=5487$ \\
+Порт ассистента & $8000+57=8057$ \\
+Префикс ресурсов & \texttt{fedchenko} \\
+Учебный ключ приложения & \texttt{secret57fedchenko} \\
+Имя базы данных & \texttt{fedchenko57} \\
+\hline
+\end{tabularx}
+\end{table}
+
+\chapter{Ход работы}
+
+Команды выполняются из каталога \texttt{solutions/assist-py}.
+Сценарий \texttt{lab3.sh} содержит отдельную команду для каждого этапа.
+
+\newcommand{\LabEvidence}[2]{%
+  \begin{figure}[htbp]
+    \centering
+    \IfFileExists{#1.png}{%
+      \includegraphics[width=\linewidth,height=0.65\textheight,keepaspectratio]{#1.png}%
+    }{%
+      \fbox{\parbox{0.85\linewidth}{Скриншот ожидается: \texttt{#1.png}.}}%
+    }
+    \caption{#2}
+  \end{figure}
+}
+
+\section{Именованный том и PostgreSQL}
+
+Команда \texttt{bash lab3.sh 1} создаёт том \texttt{fedchenko-pgdata} и
+подключает его к каталогу данных PostgreSQL. На хосте база доступна через
+порт 5487, который перенаправляется во внутренний порт 5432. Ассистент
+обращается к базе по адресу \texttt{host.docker.internal:5487}. Проверочный
+вывод включает главную страницу, состояние БД, создание заметки и чтение
+списка заметок.
+
+\LabEvidence{step-01-curl}{Четыре запроса к ассистенту}
+\clearpage
+
+\section{Персистентность при пересоздании}
+
+Команда \texttt{bash lab3.sh 2} останавливает и удаляет контейнер ассистента,
+запускает новый контейнер с тем же адресом базы и проверяет, что
+идентификатор контейнера изменился. Повторный запрос к \texttt{/notes}
+проверяет наличие первой заметки.
+
+\LabEvidence{step-02-persistence}{Проверка заметок после пересоздания ассистента}
+\clearpage
+
+\section{Привязка каталога конфигурации}
+
+Команда \texttt{bash lab3.sh 3} подключает каталог \texttt{config} с хоста
+в \texttt{/app/config} в режиме только для чтения. Через \texttt{docker exec}
+выводится файл \texttt{app.conf}, где поле владельца содержит
+\texttt{fedchenko}.
+
+\LabEvidence{step-03-config}{Файл конфигурации внутри контейнера}
+\clearpage
+
+\section{Пользовательская сеть}
+
+Команда \texttt{bash lab3.sh 4} пересоздаёт контейнеры в сети
+\texttt{fedchenko-backend} и повторно подключает тот же том. Приложение
+использует имя \texttt{fedchenko-postgres} и внутренний порт 5432.
+Порт PostgreSQL на хосте не публикуется. Проверка сравнивает доступность
+имени контейнера из стандартной и пользовательской сетей Docker.
+
+\LabEvidence{step-04-ping-outside}{Проверка имени PostgreSQL вне пользовательской сети}
+\LabEvidence{step-04-ping-inside}{Доступ к PostgreSQL из пользовательской сети}
+\clearpage
+
+\section{Финальное состояние}
+
+Команда \texttt{bash lab3.sh 5} выводит время, пользователя и хост,
+список запущенных контейнеров, именованный том и пользовательскую сеть.
+
+\LabEvidence{step-05-infrastructure}{Контейнеры, том и сеть}
+\clearpage
+
+\chapter{Вывод}
+
+Хранение заметок вынесено в PostgreSQL. Именованный том сохраняет данные
+при пересоздании контейнера базы. Привязка каталога позволяет обновить
+файл конфигурации на хосте без пересборки образа. В пользовательской сети
+ассистент обращается к PostgreSQL по DNS-имени контейнера.
+
+\section*{Репозиторий}
+\href{\RepositoryURL}{mlproger/maxim-k8s, ветка lab-3}
